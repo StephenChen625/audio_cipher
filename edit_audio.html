@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>在线音频编辑工具</title>
+  <!-- 引入 LameJS 库用于 MP3 编码 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.0/lame.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 20px;
+      background-color: #f0f2f5;
+      color: #333;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 2em;
+      color: #4a90e2;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5em;
+      justify-content: center;
+      margin-bottom: 1.5em;
+    }
+    .file-select, .edit-controls, .operation-controls, .play-controls {
+      background-color: #fff;
+      padding: 1em 2em;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .spacer {
+    height: 30px; /* 调整这里的值以增加或减少间距 */
+    }
+    .file-select label, .edit-controls label, .operation-controls label, .play-controls label {
+      font-weight: bold;
+      margin-bottom: 0.5em;
+    }
+    #waveform {
+      border: 1px solid #ccc;
+      width: 100%;
+      max-width: 1200px;
+      height: 300px;
+      display: block;
+      margin: 0 auto 2em auto;
+      background-color: #fff;
+      border-radius: 8px;
+    }
+    button {
+      padding: 0.6em 1.2em;
+      font-size: 1em;
+      border: none;
+      border-radius: 4px;
+      background-color: #4a90e2;
+      color: #fff;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      margin-top: 0.5em;
+    }
+    button:hover:not(:disabled) {
+      background-color: #357ab8;
+    }
+    button:disabled {
+      background-color: #bbb;
+      cursor: not-allowed;
+    }
+    input[type="range"] {
+      width: 200px;
+    }
+    label {
+      font-weight: bold;
+    }
+    @media (max-width: 768px) {
+      .controls {
+        flex-direction: column;
+        align-items: center;
+      }
+      .edit-controls, .operation-controls, .play-controls {
+        width: 90%;
+      }
+      input[type="range"] {
+        width: 100%;
+      }
+      #waveform {
+        height: 200px;
+      }
+    }
+    /* Loading Indicator */
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      display: none; /* Hidden by default */
+    }
+    .spinner {
+      border: 8px solid #f3f3f3;
+      border-top: 8px solid #4a90e2;
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <h1>在线音频编辑工具</h1>
+  
+  <!-- 文件加载部分 -->
+  <div class="controls">
+    <div class="file-select">
+      <label>默认音频文件:</label>
+      <button id="loadDefault1">加载 message1.mp3</button>
+      <button id="loadDefault2">加载 message2.mp3</button>
+    </div>
+    
+    <div class="file-select">
+      <label>或上传本地音频:</label>
+      <input type="file" id="fileInput" accept="audio/*" />
+    </div>
+  </div>
+  
+  <!-- 波形显示的canvas -->
+  <canvas id="waveform" width="1200" height="300"></canvas>
+  
+  <!-- 编辑控制部分 -->
+  <div class="controls">
+    
+    <!-- 播放控制模块 -->
+    <div class="play-controls">
+        <label>播放控制:</label>
+        <button id="playBtn" disabled>播放</button>
+        <button id="pauseBtn" disabled>暂停</button>
+        <button id="stopBtn" disabled>停止</button>
+    </div>
+
+    <!-- 操作模块 -->
+    <div class="operation-controls">
+      <label>操作:</label>
+      <button id="reverseBtn" disabled>反向播放</button>
+      <button id="resetBtn" disabled>重置音频</button>
+      <button id="saveBtn" disabled>保存音频</button>
+    </div>
+    
+    <!-- 调节模块 -->
+    <div class="edit-controls">
+        <label for="speedRange">播放速度 (0.5x ~ 2.0x):</label>
+        <input type="range" id="speedRange" min="0.5" max="2.0" step="0.1" value="1.0" />
+        <span id="speedValue">1.0x</span>
+        <div class="spacer"></div>
+        <label for="volumeRange">音量:</label>
+        <input type="range" id="volumeRange" min="0" max="2" step="0.1" value="1.0" />
+        <span id="volumeValue">100%</span>
+    </div>
+    
+  </div>
+  
+  <!-- Loading Indicator -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+  </div>
+  
+  <script>
+    // 获取 DOM 元素
+    const loadDefault1Btn = document.getElementById("loadDefault1");
+    const loadDefault2Btn = document.getElementById("loadDefault2");
+    const fileInput = document.getElementById("fileInput");
+    
+    const speedRange = document.getElementById("speedRange");
+    const speedValue = document.getElementById("speedValue");
+    
+    const volumeRange = document.getElementById("volumeRange");
+    const volumeValue = document.getElementById("volumeValue");
+    
+    const reverseBtn = document.getElementById("reverseBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const saveBtn = document.getElementById("saveBtn");
+    
+    const playBtn = document.getElementById("playBtn");
+    const pauseBtn = document.getElementById("pauseBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    
+    const waveformCanvas = document.getElementById("waveform");
+    const canvasCtx = waveformCanvas.getContext("2d");
+    
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    
+    // AudioContext 和相关变量
+    let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    let originalBuffer = null; // 原始 AudioBuffer
+    let processedBuffer = null; // 处理后的 AudioBuffer
+    let sourceNode = null; // 播放节点
+    let gainNode = null; // 音量控制节点
+    let isPlaying = false;
+    let isReversed = false;
+    
+    // 显示加载指示器
+    function showLoading() {
+      loadingOverlay.style.display = 'flex';
+    }
+    
+    // 隐藏加载指示器
+    function hideLoading() {
+      loadingOverlay.style.display = 'none';
+    }
+    
+    // 重置滑块函数
+    function resetSliders() {
+      // 重置播放速度滑块和显示文本
+      speedRange.value = 1.0;
+      speedValue.textContent = "1.0x";
+
+      // 重置音量滑块和显示文本
+      volumeRange.value = 1.0;
+      volumeValue.textContent = "100%";
+      volumeMeter.style.width = "50%";
+    }
+    
+    // 获取音量指示器
+    const volumeMeter = document.createElement('div');
+    volumeMeter.className = 'volume-meter-fill';
+    document.querySelector('.edit-controls').appendChild(volumeMeter);
+    
+    // 加载默认音频文件
+    loadDefault1Btn.addEventListener("click", () => {
+      loadAudio('message1.mp3');
+    });
+    
+    loadDefault2Btn.addEventListener("click", () => {
+      loadAudio('message2.mp3');
+    });
+    
+    // 加载本地文件
+    fileInput.addEventListener("change", handleFileSelect);
+    
+    // 编辑控制
+    speedRange.addEventListener("input", handleSpeedChange);
+    volumeRange.addEventListener("input", handleVolumeChange);
+    reverseBtn.addEventListener("click", handleReverse);
+    resetBtn.addEventListener("click", handleReset);
+    saveBtn.addEventListener("click", handleSave);
+    
+    // 播放控制
+    playBtn.addEventListener("click", handlePlay);
+    pauseBtn.addEventListener("click", handlePause);
+    stopBtn.addEventListener("click", handleStop);
+    
+    // 处理文件选择
+    function handleFileSelect(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      loadAudio(url, file.name);
+    }
+    
+    // 加载音频文件
+    async function loadAudio(url, displayName = "默认文件") {
+      try {
+        showLoading();
+        resetAudio();
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        originalBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        processedBuffer = originalBuffer;
+        drawWaveform(processedBuffer);
+        enableControls();
+        
+        // 重置滑块到初始状态
+        resetSliders();
+        
+        alert(`已加载音频文件: ${displayName}`);
+      } catch (error) {
+        console.error("加载音频失败:", error);
+        alert("加载音频失败，请检查文件路径或服务器设置。");
+      } finally {
+        hideLoading();
+      }
+    }
+    
+    // 绘制波形
+    function drawWaveform(buffer) {
+      const rawData = buffer.getChannelData(0);
+      const samples = rawData.length;
+      const width = waveformCanvas.width;
+      const height = waveformCanvas.height;
+      const blockSize = Math.floor(samples / width); // 每个像素对应的样本数
+      const filteredData = [];
+      for (let i = 0; i < width; i++) {
+        let sum = 0;
+        for (let j = 0; j < blockSize; j++) {
+          sum += Math.abs(rawData[(i * blockSize) + j]);
+        }
+        filteredData.push(sum / blockSize);
+      }
+      
+      // 获取当前音量值
+      const volume = parseFloat(volumeRange.value);
+      
+      // 清空画布
+      canvasCtx.clearRect(0, 0, width, height);
+      
+      // 绘制背景
+      canvasCtx.fillStyle = "#ffffff";
+      canvasCtx.fillRect(0, 0, width, height);
+      
+      // 绘制波形，考虑音量调整
+      canvasCtx.lineWidth = 1;
+      canvasCtx.strokeStyle = "#4a90e2";
+      canvasCtx.beginPath();
+      const maxAmplitude = Math.max(...filteredData) * volume;
+      for (let i = 0; i < filteredData.length; i++) {
+        const x = i;
+        const y = height - (filteredData[i] * volume / maxAmplitude) * height;
+        if (i === 0) {
+          canvasCtx.moveTo(x, y);
+        } else {
+          canvasCtx.lineTo(x, y);
+        }
+      }
+      canvasCtx.stroke();
+      
+      // 绘制时间轴
+      drawTimeAxis(buffer.duration);
+    }
+    
+    // 绘制时间轴
+    function drawTimeAxis(duration) {
+      const width = waveformCanvas.width;
+      const height = waveformCanvas.height;
+      const ctx = canvasCtx;
+      
+      ctx.font = "12px Arial";
+      ctx.fillStyle = "#333";
+      ctx.textAlign = "center";
+      
+      // 动态调整时间刻度单位
+      let timeUnit;
+      if (duration < 1) {
+        timeUnit = 0.1; // 100ms
+      } else if (duration < 10) {
+        timeUnit = 1; // 1s
+      } else if (duration < 60) {
+        timeUnit = 5; // 5s
+      } else {
+        timeUnit = 10; // 10s
+      }
+      
+      const numUnits = Math.ceil(duration / timeUnit);
+      
+      for (let i = 0; i <= numUnits; i++) {
+        const currentTime = i * timeUnit;
+        const x = (currentTime / duration) * width;
+        
+        // 画刻度线
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.strokeStyle = "#e0e0e0";
+        ctx.stroke();
+        
+        // 画时间标签
+        let displayTime;
+        if (duration < 1) {
+          displayTime = (currentTime * 1000).toFixed(0) + 'ms';
+        } else {
+          displayTime = formatTime(currentTime);
+        }
+        ctx.fillText(displayTime, x, height - 5);
+      }
+    }
+    
+    // 时间格式化函数
+    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      if (mins > 0) {
+        return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+      } else if (seconds >= 1) {
+        return `${secs}s`;
+      } else {
+        return `${(seconds * 1000).toFixed(0)}ms`;
+      }
+    }
+    
+    // 变速处理
+    async function handleSpeedChange() {
+      const speed = parseFloat(speedRange.value);
+      speedValue.textContent = `${speed.toFixed(1)}x`;
+      if (originalBuffer) {
+        showLoading();
+        await processAudio(speed);
+        hideLoading();
+      }
+    }
+    
+    // 音量调整
+    function handleVolumeChange() {
+      const volume = parseFloat(volumeRange.value);
+      volumeValue.textContent = `${(volume * 100).toFixed(0)}%`;
+      if (gainNode) {
+        gainNode.gain.value = volume;
+      }
+      // 重新绘制波形以反映音量变化
+      if (processedBuffer) {
+        drawWaveform(processedBuffer);
+      }
+    }
+    
+    // 反向播放
+    async function handleReverse() {
+      if (!processedBuffer) return;
+      showLoading();
+      const reversedBuffer = await reverseAudioBuffer(processedBuffer);
+      if (reversedBuffer) {
+        processedBuffer = reversedBuffer;
+        drawWaveform(processedBuffer);
+        isReversed = !isReversed;
+        alert(isReversed ? "音频已反向" : "音频已恢复正向");
+      }
+      hideLoading();
+    }
+    
+    // 重置音频到原始状态
+    function handleReset() {
+      if (!originalBuffer) return;
+      processedBuffer = originalBuffer;
+      drawWaveform(processedBuffer);
+      isReversed = false;
+      resetSliders();
+      alert("音频已重置");
+    }
+    
+    // 播放音频
+    function handlePlay() {
+      if (!processedBuffer || isPlaying) return;
+      sourceNode = audioContext.createBufferSource();
+      sourceNode.buffer = processedBuffer;
+      
+      // 音量控制
+      gainNode = audioContext.createGain();
+      gainNode.gain.value = parseFloat(volumeRange.value);
+      
+      sourceNode.connect(gainNode).connect(audioContext.destination);
+      sourceNode.start();
+      isPlaying = true;
+      
+      // 监听播放结束
+      sourceNode.onended = () => {
+        isPlaying = false;
+        playBtn.disabled = false;
+        pauseBtn.disabled = true;
+        stopBtn.disabled = true;
+      };
+      
+      playBtn.disabled = true;
+      pauseBtn.disabled = false;
+      stopBtn.disabled = false;
+    }
+    
+    // 暂停音频
+    function handlePause() {
+      if (!isPlaying) return;
+      audioContext.suspend().then(() => {
+        isPlaying = false;
+        playBtn.disabled = false;
+        pauseBtn.disabled = true;
+      });
+    }
+    
+    // 停止音频
+    function handleStop() {
+      if (!sourceNode) return;
+      sourceNode.stop();
+      sourceNode.disconnect();
+      isPlaying = false;
+      
+      playBtn.disabled = false;
+      pauseBtn.disabled = true;
+      stopBtn.disabled = true;
+    }
+    
+    // 保存音频到本地（MP3格式）
+    async function handleSave() {
+      if (!processedBuffer) return;
+      showLoading();
+      try {
+        const mp3Blob = await bufferToMp3Blob(processedBuffer);
+        const url = URL.createObjectURL(mp3Blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = 'processed_audio.mp3';
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        alert("已生成并下载处理后的音频文件");
+      } catch (error) {
+        console.error("保存音频失败:", error);
+        alert("保存音频失败，请查看控制台。");
+      } finally {
+        hideLoading();
+      }
+    }
+    
+    // 处理音频（变速）
+    async function processAudio(speed) {
+      if (!originalBuffer) return;
+      try {
+        // 使用 OfflineAudioContext 进行变速处理
+        const offlineContext = new OfflineAudioContext(
+          originalBuffer.numberOfChannels,
+          Math.ceil(originalBuffer.length / speed),
+          originalBuffer.sampleRate
+        );
+        
+        const bufferSource = offlineContext.createBufferSource();
+        bufferSource.buffer = originalBuffer;
+        bufferSource.playbackRate.value = speed;
+        
+        bufferSource.connect(offlineContext.destination);
+        bufferSource.start();
+        
+        const renderedBuffer = await offlineContext.startRendering();
+        processedBuffer = renderedBuffer;
+        drawWaveform(processedBuffer);
+      } catch (error) {
+        console.error("变速处理失败:", error);
+        alert("变速处理失败，请查看控制台。");
+      }
+    }
+    
+    // 反转 AudioBuffer
+    async function reverseAudioBuffer(buffer) {
+      try {
+        // 创建一个新的 AudioBuffer
+        const numberOfChannels = buffer.numberOfChannels;
+        const length = buffer.length;
+        const sampleRate = buffer.sampleRate;
+        const reversedBuffer = audioContext.createBuffer(numberOfChannels, length, sampleRate);
+        
+        for (let channel = 0; channel < numberOfChannels; channel++) {
+          const channelData = buffer.getChannelData(channel);
+          const reversedData = new Float32Array(channelData);
+          reversedData.reverse();
+          reversedBuffer.copyToChannel(reversedData, channel, 0);
+        }
+        
+        return reversedBuffer;
+      } catch (error) {
+        console.error("反转音频失败:", error);
+        alert("反转音频失败，请查看控制台。");
+        return null;
+      }
+    }
+    
+    // 启用编辑和播放控件
+    function enableControls() {
+      playBtn.disabled = false;
+      pauseBtn.disabled = true;
+      stopBtn.disabled = true;
+      reverseBtn.disabled = false;
+      resetBtn.disabled = false;
+      saveBtn.disabled = false;
+    }
+    
+    // 重置音频播放状态
+    function resetAudio() {
+      if (isPlaying && sourceNode) {
+        sourceNode.stop();
+        sourceNode.disconnect();
+      }
+      isPlaying = false;
+      sourceNode = null;
+      gainNode = null;
+      processedBuffer = null;
+      originalBuffer = null;
+      // 清空波形
+      canvasCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+      canvasCtx.fillStyle = "#ffffff";
+      canvasCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+      playBtn.disabled = true;
+      pauseBtn.disabled = true;
+      stopBtn.disabled = true;
+      reverseBtn.disabled = true;
+      resetBtn.disabled = true;
+      saveBtn.disabled = true;
+    }
+    
+    // 将 AudioBuffer 转换为 MP3 Blob
+    async function bufferToMp3Blob(buffer) {
+      const mp3encoder = new lamejs.Mp3Encoder(buffer.numberOfChannels, buffer.sampleRate, 128);
+      const samples = buffer.getChannelData(0);
+      const bufferLength = samples.length;
+      const blockSize = 1152;
+      let mp3Data = [];
+      
+      for (let i = 0; i < bufferLength; i += blockSize) {
+        const sampleChunk = samples.subarray(i, i + blockSize);
+        const mp3buf = mp3encoder.encodeBuffer(convertFloat32ToInt16(sampleChunk));
+        if (mp3buf.length > 0) {
+          mp3Data.push(new Int8Array(mp3buf));
+        }
+      }
+      const mp3buf = mp3encoder.flush();
+      if (mp3buf.length > 0) {
+        mp3Data.push(new Int8Array(mp3buf));
+      }
+      return new Blob(mp3Data, { type: 'audio/mp3' });
+    }
+    
+    // 将 Float32Array 转换为 Int16Array
+    function convertFloat32ToInt16(buffer) {
+      let l = buffer.length;
+      const buf = new Int16Array(l);
+      while (l--) {
+        buf[l] = Math.min(1, buffer[l]) * 0x7FFF;
+      }
+      return buf;
+    }
+    
+    // 将 AudioBuffer 转换为 WAV Blob（备用）
+    function bufferToWavBlob(buffer) {
+      const numOfChan = buffer.numberOfChannels,
+            length = buffer.length * numOfChan * 2 + 44,
+            bufferArray = new ArrayBuffer(length),
+            view = new DataView(bufferArray),
+            channels = [],
+            sampleRate = buffer.sampleRate,
+            bitDepth = 16;
+      
+      // 写入 WAV 头
+      /* RIFF identifier */
+      writeString(view, 0, 'RIFF');
+      /* file length */
+      view.setUint32(4, 36 + buffer.length * numOfChan * 2, true);
+      /* RIFF type */
+      writeString(view, 8, 'WAVE');
+      /* format chunk identifier */
+      writeString(view, 12, 'fmt ');
+      /* format chunk length */
+      view.setUint32(16, 16, true);
+      /* sample format (raw) */
+      view.setUint16(20, 1, true);
+      /* channel count */
+      view.setUint16(22, numOfChan, true);
+      /* sample rate */
+      view.setUint32(24, sampleRate, true);
+      /* byte rate (sample rate * block align) */
+      view.setUint32(28, sampleRate * numOfChan * 2, true);
+      /* block align (channel count * bytes per sample) */
+      view.setUint16(32, numOfChan * 2, true);
+      /* bits per sample */
+      view.setUint16(34, bitDepth, true);
+      /* data chunk identifier */
+      writeString(view, 36, 'data');
+      /* data chunk length */
+      view.setUint32(40, buffer.length * numOfChan * 2, true);
+      
+      // 写入音频数据
+      for (let i = 0; i < buffer.numberOfChannels; i++) {
+        channels.push(buffer.getChannelData(i));
+      }
+      
+      let interleaved;
+      if (numOfChan === 2) {
+        interleaved = interleave(channels[0], channels[1]);
+      } else {
+        interleaved = channels[0];
+      }
+      
+      floatTo16BitPCM(view, 44, interleaved);
+      
+      return new Blob([view], { type: 'audio/wav' });
+    }
+    
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    }
+    
+    function interleave(left, right) {
+      const length = left.length + right.length;
+      const result = new Float32Array(length);
+      
+      let index = 0,
+          inputIndex = 0;
+      
+      while (index < length) {
+        result[index++] = left[inputIndex];
+        result[index++] = right[inputIndex];
+        inputIndex++;
+      }
+      return result;
+    }
+    
+    function floatTo16BitPCM(output, offset, input) {
+      for (let i = 0; i < input.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, input[i]));
+        s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        output.setInt16(offset, s, true);
+      }
+    }
+  </script>
+</body>
+</html>
